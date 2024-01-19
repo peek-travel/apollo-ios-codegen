@@ -506,6 +506,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     public let pruneGeneratedFiles: Bool
     /// Whether generated GraphQL operation and local cache mutation class types will be marked as `final`.
     public let markOperationDefinitionsAsFinal: Bool
+    public let exportApolloAPI: Bool
 
     /// Default property values
     public struct Default {
@@ -519,6 +520,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       public static let conversionStrategies: ConversionStrategies = .init()
       public static let pruneGeneratedFiles: Bool = true
       public static let markOperationDefinitionsAsFinal: Bool = false
+      public static let exportApolloAPI: Bool = true
     }
 
     /// Designated initializer.
@@ -550,7 +552,8 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       warningsOnDeprecatedUsage: Composition = Default.warningsOnDeprecatedUsage,
       conversionStrategies: ConversionStrategies = Default.conversionStrategies,
       pruneGeneratedFiles: Bool = Default.pruneGeneratedFiles,
-      markOperationDefinitionsAsFinal: Bool = Default.markOperationDefinitionsAsFinal
+      markOperationDefinitionsAsFinal: Bool = Default.markOperationDefinitionsAsFinal,
+      exportApolloAPI: Bool = Default.exportApolloAPI
     ) {
       self.additionalInflectionRules = additionalInflectionRules
       self.deprecatedEnumCases = deprecatedEnumCases
@@ -562,6 +565,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       self.conversionStrategies = conversionStrategies
       self.pruneGeneratedFiles = pruneGeneratedFiles
       self.markOperationDefinitionsAsFinal = markOperationDefinitionsAsFinal
+      self.exportApolloAPI = exportApolloAPI
     }
 
     // MARK: Codable
@@ -579,6 +583,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       case conversionStrategies
       case pruneGeneratedFiles
       case markOperationDefinitionsAsFinal
+      case exportApolloAPI
     }
 
     public init(from decoder: Decoder) throws {
@@ -639,6 +644,11 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
         Bool.self,
         forKey: .markOperationDefinitionsAsFinal
       ) ?? Default.markOperationDefinitionsAsFinal
+
+      exportApolloAPI = try values.decodeIfPresent(
+        Bool.self,
+        forKey: .exportApolloAPI
+      ) ?? Default.exportApolloAPI
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -654,6 +664,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       try container.encode(self.conversionStrategies, forKey: .conversionStrategies)
       try container.encode(self.pruneGeneratedFiles, forKey: .pruneGeneratedFiles)
       try container.encode(self.markOperationDefinitionsAsFinal, forKey: .markOperationDefinitionsAsFinal)
+      try container.encode(self.exportApolloAPI, forKey: .exportApolloAPI)
     }
   }
 
@@ -1332,7 +1343,8 @@ extension ApolloCodegenConfiguration.OutputOptions {
     warningsOnDeprecatedUsage: ApolloCodegenConfiguration.Composition = Default.warningsOnDeprecatedUsage,
     conversionStrategies: ApolloCodegenConfiguration.ConversionStrategies = Default.conversionStrategies,
     pruneGeneratedFiles: Bool = Default.pruneGeneratedFiles,
-    markOperationDefinitionsAsFinal: Bool = Default.markOperationDefinitionsAsFinal
+    markOperationDefinitionsAsFinal: Bool = Default.markOperationDefinitionsAsFinal,
+    exportApolloAPI: Bool = Default.exportApolloAPI
   ) {
     self.additionalInflectionRules = additionalInflectionRules
     self.deprecatedEnumCases = deprecatedEnumCases
@@ -1344,6 +1356,7 @@ extension ApolloCodegenConfiguration.OutputOptions {
     self.conversionStrategies = conversionStrategies
     self.pruneGeneratedFiles = pruneGeneratedFiles
     self.markOperationDefinitionsAsFinal = markOperationDefinitionsAsFinal
+    self.exportApolloAPI = exportApolloAPI
   }
   
   /// Deprecated initializer.
@@ -1381,7 +1394,8 @@ extension ApolloCodegenConfiguration.OutputOptions {
     warningsOnDeprecatedUsage: ApolloCodegenConfiguration.Composition = Default.warningsOnDeprecatedUsage,
     conversionStrategies: ApolloCodegenConfiguration.ConversionStrategies = Default.conversionStrategies,
     pruneGeneratedFiles: Bool = Default.pruneGeneratedFiles,
-    markOperationDefinitionsAsFinal: Bool = Default.markOperationDefinitionsAsFinal
+    markOperationDefinitionsAsFinal: Bool = Default.markOperationDefinitionsAsFinal,
+    exportApolloAPI: Bool = Default.exportApolloAPI
   ) {
     self.additionalInflectionRules = additionalInflectionRules
     self.deprecatedEnumCases = deprecatedEnumCases
@@ -1393,6 +1407,7 @@ extension ApolloCodegenConfiguration.OutputOptions {
     self.conversionStrategies = conversionStrategies
     self.pruneGeneratedFiles = pruneGeneratedFiles
     self.markOperationDefinitionsAsFinal = markOperationDefinitionsAsFinal
+    self.exportApolloAPI = exportApolloAPI
   }
 
   /// Whether the generated operations should use Automatic Persisted Queries.

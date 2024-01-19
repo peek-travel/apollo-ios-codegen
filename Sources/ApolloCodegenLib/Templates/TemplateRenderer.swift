@@ -284,8 +284,9 @@ struct ImportStatementTemplate {
       for config: ApolloCodegen.ConfigurationContext
     ) -> TemplateString {
       let apolloAPITargetName = config.ApolloAPITargetName
+      let importStatement = config.options.exportApolloAPI ? "@_exported import" : "import"
       return """
-      @_exported import \(apolloAPITargetName)
+      \(importStatement) \(apolloAPITargetName)
       \(if: config.output.operations != .inSchemaModule, "import \(config.schemaModuleName)")
       """
     }
