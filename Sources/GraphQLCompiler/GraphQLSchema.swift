@@ -20,8 +20,8 @@ protocol GraphQLSchemaType: JavaScriptReferencedObject {
 }
 
 public class GraphQLNamedType: 
-  JavaScriptReferencedObject, @unchecked Sendable, Hashable, CustomDebugStringConvertible {
-  public let name: String
+  JavaScriptReferencedObject, @unchecked Sendable, Hashable, CustomDebugStringConvertible, GraphQLNamedItem {
+  public let name: GraphQLName
 
   public let documentation: String?
 
@@ -29,7 +29,7 @@ public class GraphQLNamedType:
     _ jsValue: JSValue,
     bridge: isolated JavaScriptBridge
   ) {
-    self.name = jsValue["name"]
+    self.name = .init(schemaName: jsValue["name"])
     self.documentation = jsValue["description"]
   }
 
@@ -37,7 +37,7 @@ public class GraphQLNamedType:
 
   /// Initializer to be used for creating mock objects in tests only.
   init(
-    name: String,
+    name: GraphQLName,
     documentation: String?
   ) {
     self.name = name
@@ -60,7 +60,7 @@ public class GraphQLNamedType:
   }
 
   public var debugDescription: String {
-    name
+    name.schemaName
   }
 }
 
@@ -71,8 +71,8 @@ public final class GraphQLScalarType: GraphQLNamedType {
   public var isCustomScalar: Bool {
     guard self.specifiedByURL == nil else { return true }
 
-    switch name {
-    case "String", "Int", "Float", "Boolean", "ID":
+    switch name.schemaName {
+    case "String", "Int", "Float", "Boolean":
       return false
     default:
       return true
@@ -86,7 +86,7 @@ public final class GraphQLScalarType: GraphQLNamedType {
 
   /// Initializer to be used for creating mock objects in tests only.
   init(
-    name: String,
+    name: GraphQLName,
     documentation: String?,
     specifiedByURL: String?
   ) {
@@ -109,7 +109,7 @@ public final class GraphQLEnumType: GraphQLNamedType {
 
   /// Initializer to be used for creating mock objects in tests only.
   init(
-    name: String,
+    name: GraphQLName,
     documentation: String?,
     values: [GraphQLEnumValue]
   ) {
@@ -118,17 +118,9 @@ public final class GraphQLEnumType: GraphQLNamedType {
   }
 }
 
-public struct GraphQLEnumValue: JavaScriptObjectDecodable {
+public struct GraphQLEnumValue: JavaScriptObjectDecodable, GraphQLNamedItem {
 
-  public struct Name {
-    public let value: String
-
-    public init(value: String) {
-      self.value = value
-    }
-  }
-
-  public let name: Name
+  public let name: GraphQLName
 
   public let documentation: String?
 
@@ -136,8 +128,8 @@ public struct GraphQLEnumValue: JavaScriptObjectDecodable {
 
   public var isDeprecated: Bool { deprecationReason != nil }
 
-  init(
-    name: Name,
+  public init(
+    name: GraphQLName,
     documentation: String?,
     deprecationReason: String?
   ) {
@@ -151,7 +143,7 @@ public struct GraphQLEnumValue: JavaScriptObjectDecodable {
     bridge: isolated JavaScriptBridge
   ) -> GraphQLEnumValue {
     self.init(
-      name: .init(value: jsValue["name"]),
+      name: .init(schemaName: jsValue["name"]),
       documentation: jsValue["description"],
       deprecationReason: jsValue["deprecationReason"]
     )
@@ -162,8 +154,11 @@ public typealias GraphQLInputFieldDictionary = OrderedDictionary<String, GraphQL
 
 public final class GraphQLInputObjectType: GraphQLNamedType {
   public private(set) var fields: GraphQLInputFieldDictionary!
+  
+  public let isOneOf: Bool
 
   required init(_ jsValue: JSValue, bridge: isolated JavaScriptBridge) {
+    self.isOneOf = jsValue["isOneOf"]
     super.init(jsValue, bridge: bridge)
   }
 
@@ -173,17 +168,19 @@ public final class GraphQLInputObjectType: GraphQLNamedType {
 
   /// Initializer to be used for creating mock objects in tests only.
   init(
-    name: String,
+    name: GraphQLName,
     documentation: String?,
-    fields: GraphQLInputFieldDictionary
+    fields: GraphQLInputFieldDictionary,
+    isOneOf: Bool = false
   ) {
     self.fields = fields
+    self.isOneOf = isOneOf
     super.init(name: name, documentation: documentation)
   }
 }
 
-public struct GraphQLInputField: JavaScriptObjectDecodable {
-  public let name: String
+public class GraphQLInputField: JavaScriptObjectDecodable, GraphQLNamedItem {
+  public let name: GraphQLName
 
   public let type: GraphQLType
 
@@ -196,9 +193,9 @@ public struct GraphQLInputField: JavaScriptObjectDecodable {
   static func fromJSValue(
     _ jsValue: JSValue,
     bridge: isolated JavaScriptBridge
-  ) -> GraphQLInputField {
+  ) -> Self {
     self.init(
-      name: jsValue["name"],
+      name: .init(schemaName: jsValue["name"]),
       type: GraphQLType.fromJSValue(jsValue["type"], bridge: bridge),
       documentation: jsValue["description"],
       deprecationReason: jsValue["deprecationReason"],
@@ -206,8 +203,8 @@ public struct GraphQLInputField: JavaScriptObjectDecodable {
     )
   }
 
-  init(
-    name: String,
+  required init(
+    name: GraphQLName,
     type: GraphQLType,
     documentation: String?,
     deprecationReason: String?,
@@ -242,16 +239,20 @@ public final class GraphQLObjectType: GraphQLCompositeType, GraphQLInterfaceImpl
   public private(set) var fields: [String: GraphQLField]!
 
   public private(set) var interfaces: [GraphQLInterfaceType]!
+  
+  public private(set) var keyFields: [String]!
 
   /// Initializer to be used for creating mock objects in tests only.
   init(
-    name: String,
+    name: GraphQLName,
     documentation: String?,
     fields: [String: GraphQLField],
-    interfaces: [GraphQLInterfaceType]
+    interfaces: [GraphQLInterfaceType],
+    keyFields: [String]
   ) {
     self.fields = fields
     self.interfaces = interfaces
+    self.keyFields = keyFields
     super.init(name: name, documentation: documentation)
   }
 
@@ -262,6 +263,7 @@ public final class GraphQLObjectType: GraphQLCompositeType, GraphQLInterfaceImpl
   override func finalize(_ jsValue: JSValue, bridge: isolated JavaScriptBridge) {
     self.fields = try! bridge.invokeMethod("getFields", on: jsValue)
     self.interfaces = try! bridge.invokeMethod("getInterfaces", on: jsValue)
+    self.keyFields = jsValue["_apolloKeyFields"]
   }
 
   public override var debugDescription: String {
@@ -277,16 +279,20 @@ public final class GraphQLInterfaceType: GraphQLAbstractType, GraphQLInterfaceIm
   public private(set) var fields: [String: GraphQLField]!
 
   public private(set) var interfaces: [GraphQLInterfaceType]!
+  
+  public private(set) var keyFields: [String]!
 
   /// Initializer to be used for creating mock objects in tests only.
   init(
-    name: String,
+    name: GraphQLName,
     documentation: String?,
     fields: [String: GraphQLField],
-    interfaces: [GraphQLInterfaceType]
+    interfaces: [GraphQLInterfaceType],
+    keyFields: [String]
   ) {
     self.fields = fields
     self.interfaces = interfaces
+    self.keyFields = keyFields
     super.init(name: name, documentation: documentation)
   }
 
@@ -297,6 +303,7 @@ public final class GraphQLInterfaceType: GraphQLAbstractType, GraphQLInterfaceIm
   override func finalize(_ jsValue: JSValue, bridge: isolated JavaScriptBridge) {
     self.fields = try! bridge.invokeMethod("getFields", on: jsValue)
     self.interfaces = try! bridge.invokeMethod("getInterfaces", on: jsValue)
+    self.keyFields = jsValue["_apolloKeyFields"]
   }
 
   public override var debugDescription: String {
@@ -314,7 +321,7 @@ public final class GraphQLUnionType: GraphQLAbstractType {
 
   /// Initializer to be used for creating mock objects in tests only.
   init(
-    name: String,
+    name: GraphQLName,
     documentation: String?,
     types: [GraphQLObjectType]
   ) {

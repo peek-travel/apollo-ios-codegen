@@ -1,5 +1,7 @@
-// swift-tools-version:5.7
+// swift-tools-version:5.9
+//
 // The swift-tools-version declares the minimum version of Swift required to build this package.
+// Swift 5.9 is available from Xcode 15.0.
 
 import PackageDescription
 
@@ -33,7 +35,8 @@ let package = Package(
         "TemplateString",
         .product(name: "InflectorKit", package: "InflectorKit"),
         .product(name: "OrderedCollections", package: "swift-collections")
-      ]
+      ],
+      swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
     ),
     .target(
       name: "GraphQLCompiler",
@@ -43,7 +46,8 @@ let package = Package(
       ],
       exclude: [
         "JavaScript"
-      ]
+      ],
+      swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
     ),
     .target(
       name: "IR",
@@ -52,15 +56,18 @@ let package = Package(
         "TemplateString",
         "Utilities",
         .product(name: "OrderedCollections", package: "swift-collections")        
-      ]
+      ],
+      swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
     ),
     .target(
       name: "TemplateString",
-      dependencies: []
+      dependencies: [],
+      swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
     ),
     .target(
       name: "Utilities",
-      dependencies: []
+      dependencies: [],
+      swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
     ),
     .executableTarget(
       name: "apollo-ios-cli",
@@ -69,14 +76,16 @@ let package = Package(
       ],
       exclude: [
         "README.md",
-      ]
+      ],
+      swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
     ),
     .target(
       name: "CodegenCLI",
       dependencies: [
         "ApolloCodegenLib",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
-      ]
+      ],
+      swiftSettings: [.enableUpcomingFeature("ExistentialAny")]
     ),
   ]
 )

@@ -8,10 +8,11 @@ struct InterfaceFileGenerator: FileGenerator {
   /// Shared codegen configuration.
   let config: ApolloCodegen.ConfigurationContext
 
-  var template: TemplateRenderer {
+  var template: any TemplateRenderer {
     InterfaceTemplate(graphqlInterface: graphqlInterface, config: config)
   }
 
   var target: FileTarget { .interface }
-  var fileName: String { graphqlInterface.name }
+  var fileName: String { graphqlInterface.render(as: .filename) }
+  var fileSuffix: String? { ".interface" }
 }

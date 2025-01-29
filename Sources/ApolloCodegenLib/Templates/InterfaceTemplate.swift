@@ -17,7 +17,16 @@ struct InterfaceTemplate: TemplateRenderer {
   ) -> TemplateString {
     """
     \(documentation: graphqlInterface.documentation, config: config)
-    static let \(graphqlInterface.formattedName) = Interface(name: "\(graphqlInterface.name)")
+    \(graphqlInterface.name.typeNameDocumentation)
+    static let \(graphqlInterface.render(as: .typename)) = \(config.ApolloAPITargetName).Interface(name: "\(graphqlInterface.name.schemaName)", keyFields: \(KeyFieldsTemplate()))
+    """
+  }
+  
+  private func KeyFieldsTemplate() -> TemplateString {
+    guard let fields = graphqlInterface.keyFields, !fields.isEmpty else { return "nil" }
+    
+    return """
+    [\(list: fields.map { "\"\($0)\"" })]
     """
   }
 }

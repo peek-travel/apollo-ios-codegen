@@ -210,7 +210,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
 
     /// `Decodable` implementation to allow for properties to be optional in the encoded JSON with
     /// specified defaults when not present.
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
       let values = try decoder.container(keyedBy: CodingKeys.self)
       try throwIfContainsUnexpectedKey(container: values, type: Self.self, decoder: decoder)
       schemaTypes = try values.decode(
@@ -232,7 +232,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       )
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
 
       try container.encode(self.schemaTypes, forKey: .schemaTypes)
@@ -268,7 +268,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       moduleType: ModuleType
     ) {
       self.path = path
-      self.moduleType = moduleType
+      self.moduleType = moduleType == .swiftPackageManager ? .swiftPackage(apolloSDKDependency: .default) : moduleType
     }
 
     /// Compatible dependency manager automation.
@@ -283,7 +283,12 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       case embeddedInTarget(name: String, accessModifier: AccessModifier = .internal)
       /// Generates a `Package.swift` file that is suitable for linking the generated schema types
       /// files to your project using Swift Package Manager.
+      /// Attention: This case has been deprecated, use .swiftPackage(apolloSDKVersion:) case instead.
       case swiftPackageManager
+      /// Generates a `Package.swift` file that is suitable for linking then generated schema types
+      /// files to your project using Swift Package Manager. Uses the `apolloSDKDependency`
+      /// to determine how to setup the dependency on `apollo-ios`.
+      case swiftPackage(apolloSDKDependency: ApolloSDKDependency = .default)
       /// No module will be created for the generated types and you are required to create the
       /// module to support your preferred dependency manager. You must specify the name of the
       /// module you will create in the `schemaNamespace` property as this will be used in `import`
@@ -294,7 +299,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       /// location.
       case other
 
-      public init(from decoder: Decoder) throws {
+      public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
         guard let key = container.allKeys.first else {
@@ -321,10 +326,187 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
           self = .embeddedInTarget(name: name, accessModifier: accessModifier)
 
         case .swiftPackageManager:
-          self = .swiftPackageManager
+          self = .swiftPackage(apolloSDKDependency: .default)
+          
+        case .swiftPackage:
+          let nestedContainer = try container.nestedContainer(
+            keyedBy: SwiftPackageCodingKeys.self,
+            forKey: .swiftPackage
+          )
+          
+          let apolloSDKDependency = try nestedContainer.decodeIfPresent(ApolloSDKDependency.self, forKey: .apolloSDKDependency) ?? ApolloSDKDependency()
+          self = .swiftPackage(apolloSDKDependency: apolloSDKDependency)
 
         case .other:
           self = .other
+        }
+      }
+      
+      /// Configuation for apollo-ios dependency in SPM modules
+      public struct ApolloSDKDependency: Codable, Equatable {
+        /// URL for the SPM package dependency, not used for local dependencies.
+        ///  Defaults to 'https://github.com/apollographql/apollo-ios'.
+        let url: String
+        /// Type of SPM dependency to use.
+        let sdkVersion: SDKVersion
+        
+        public static let `default` = ApolloSDKDependency()
+        
+        public init(
+          url: String = "https://github.com/apollographql/apollo-ios",
+          sdkVersion: SDKVersion = .default
+        ) {
+          self.url = url
+          self.sdkVersion = sdkVersion
+        }
+        
+        enum CodingKeys: CodingKey, CaseIterable {
+          case url
+          case sdkVersion
+        }
+        
+        public func encode(to encoder: any Encoder) throws {
+          var container = encoder.container(keyedBy: CodingKeys.self)
+          
+          try container.encode(self.url, forKey: .url)
+          
+          switch self.sdkVersion {
+          case .default:
+            try container.encode(self.sdkVersion.stringValue, forKey: .sdkVersion)
+          default:
+            try container.encode(self.sdkVersion, forKey: .sdkVersion)
+          }
+        }
+        
+        public init(from decoder: any Decoder) throws {
+          let values = try decoder.container(keyedBy: CodingKeys.self)
+          try throwIfContainsUnexpectedKey(
+            container: values,
+            type: Self.self,
+            decoder: decoder
+          )
+          
+          url = try values.decodeIfPresent(String.self, forKey: .url) ?? "https://github.com/apollographql/apollo-ios"
+          
+          if let version = try? values.decodeIfPresent(SDKVersion.self, forKey: .sdkVersion) {
+            sdkVersion = version
+          } else if let versionString = try? values.decodeIfPresent(String.self, forKey: .sdkVersion) {
+            let version = try SDKVersion(fromString: versionString)
+            sdkVersion = version
+          } else {
+            sdkVersion = .default
+          }
+        }
+        
+        /// Type of SPM dependency
+        public enum SDKVersion: Codable, Equatable {
+          /// Configures SPM dependency to use the exact version of apollo-ios
+          /// that matches the code generation library version currently in use.
+          /// Results in a dependency that looks like:
+          /// '.package(url: "https://github.com/apollographql/apollo-ios.git", exact: "{version}")'
+          case `default`
+          /// Configures SPM dependency to use the given branch name
+          /// for the apollo-ios dependency.
+          /// Results in a dependency that looks like:
+          /// '.package(url: "...", branch: "{name}")'
+          case branch(name: String)
+          /// Configures SPM dependency to use the given commit hash
+          /// for the apollo-ios dependency.
+          /// Results in a dependency that looks like:
+          /// '.package(url: "...", revision: "{hash}")'
+          case commit(hash: String)
+          /// Configures SPM dependency to use the given exact version
+          /// for the apollo-ios dependency.
+          /// Results in a dependency that looks like:
+          /// '.package(url: "...", exact: "{version}")'
+          case exact(version: String)
+          /// Configures SPM dependency to use a version
+          /// starting at the given version for the apollo-ios dependency.
+          /// Results in a dependency that looks like:
+          /// '.package(url: "...", from: "{version}")'
+          case from(version: String)
+          /// Configures SPM dependency to use a local
+          /// path for the apollo-ios dependency.
+          /// Results in a dependency that looks like:
+          /// '.package(path: "{path}")'
+          case local(path: String)
+          
+          public var stringValue: String {
+            switch self {
+            case .default: return "default"
+            case .branch(_): return "branch"
+            case .commit(_): return "commit"
+            case .exact(_): return "exact"
+            case .from(_): return "from"
+            case .local(_): return "local"
+            }
+          }
+          
+          public init(fromString str: String) throws {
+            switch str {
+            case Self.default.stringValue:
+              self = .default
+            default:
+              throw ApolloConfigurationError.invalidValueForKey(key: "sdkVersion", value: str)
+            }
+          }
+          
+          public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            
+            guard let key = container.allKeys.first else {
+              throw DecodingError.typeMismatch(Self.self, DecodingError.Context.init(
+                codingPath: container.codingPath,
+                debugDescription: "Invalid number of keys found, expected one.",
+                underlyingError: nil
+              ))
+            }
+            
+            switch key {
+            case .default:
+              self = .default
+            case .branch:
+              let nestedContainer = try container.nestedContainer(
+                keyedBy: BranchCodingKeys.self,
+                forKey: .branch
+              )
+              
+              let name = try nestedContainer.decode(String.self, forKey: .name)
+              self = .branch(name: name)
+            case .commit:
+              let nestedContainer = try container.nestedContainer(
+                keyedBy: CommitCodingKeys.self,
+                forKey: .commit
+              )
+              
+              let hash = try nestedContainer.decode(String.self, forKey: .hash)
+              self = .commit(hash: hash)
+            case .exact:
+              let nestedContainer = try container.nestedContainer(
+                keyedBy: ExactCodingKeys.self,
+                forKey: .exact
+              )
+              
+              let version = try nestedContainer.decode(String.self, forKey: .version)
+              self = .exact(version: version)
+            case .from:
+              let nestedContainer = try container.nestedContainer(
+                keyedBy: FromCodingKeys.self,
+                forKey: .from
+              )
+              
+              let version = try nestedContainer.decode(String.self, forKey: .version)
+              self = .from(version: version)
+            case .local:
+              let nestedContainer = try container.nestedContainer(
+                keyedBy: LocalCodingKeys.self,
+                forKey: .local
+              )
+              
+              let path = try nestedContainer.decode(String.self, forKey: .path)
+              self = .local(path: path)
+            }
+          }
         }
       }
     }
@@ -344,7 +526,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     /// control the visibility of generated code, defaults to `.public`.
     case absolute(path: String, accessModifier: AccessModifier = .public)
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
       let container = try decoder.container(keyedBy: CodingKeys.self)
 
       guard let key = container.allKeys.first else {
@@ -414,7 +596,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     /// will fail.
     case swiftPackage(targetName: String? = nil)
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
       let container = try decoder.container(keyedBy: CodingKeys.self)
 
       guard let key = container.allKeys.first else {
@@ -468,6 +650,8 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     public let selectionSetInitializers: SelectionSetInitializers
     /// How to generate the operation documents for your generated operations.
     public let operationDocumentFormat: OperationDocumentFormat
+    /// Customization options to be applied to the schema during code generation.
+    public let schemaCustomization: SchemaCustomization
     /// Generate import statements that are compatible with including `Apollo` via Cocoapods.
     ///
     /// Cocoapods bundles all files from subspecs into the main target for a pod. This means that
@@ -506,6 +690,9 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     public let pruneGeneratedFiles: Bool
     /// Whether generated GraphQL operation and local cache mutation class types will be marked as `final`.
     public let markOperationDefinitionsAsFinal: Bool
+    /// `true` will add a filename suffix matching the schema type, the default is `false`. This can be used to
+    /// avoid filename conflicts when operation type names match schema type names.
+    public let appendSchemaTypeFilenameSuffix: Bool
     public let exportApolloAPI: Bool
 
     /// Default property values
@@ -513,13 +700,16 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       public static let additionalInflectionRules: [InflectionRule] = []
       public static let deprecatedEnumCases: Composition = .include
       public static let schemaDocumentation: Composition = .include
-      public static let selectionSetInitializers: SelectionSetInitializers = [.localCacheMutations]
+      public static let selectionSetInitializers: SelectionSetInitializers = []
+      public static let fieldMerging: FieldMerging = [.all]
       public static let operationDocumentFormat: OperationDocumentFormat = .definition
+      public static let schemaCustomization: SchemaCustomization = .init()
       public static let cocoapodsCompatibleImportStatements: Bool = false
       public static let warningsOnDeprecatedUsage: Composition = .include
       public static let conversionStrategies: ConversionStrategies = .init()
       public static let pruneGeneratedFiles: Bool = true
       public static let markOperationDefinitionsAsFinal: Bool = false
+      public static let appendSchemaTypeFilenameSuffix: Bool = false
       public static let exportApolloAPI: Bool = true
     }
 
@@ -541,18 +731,24 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     ///   - conversionStrategies: Rules for how to convert the names of values from the schema in
     ///     generated code.
     ///   - pruneGeneratedFiles: Whether unused generated files will be automatically deleted.
-    ///   - markOperationDefinitionsAsFinal: Whether generated GraphQL operation and local cache mutation class types will be marked as `final`.
+    ///   - markOperationDefinitionsAsFinal: Whether generated GraphQL operation and local cache mutation
+    ///     class types will be marked as `final`.
+    ///   - appendSchemaTypeFilenameSuffix: `true` will add a filename suffix matching the schema type, the
+    ///     default is `false`. This can be used to avoid filename conflicts when operation type names match
+    ///     schema type names.
     public init(
       additionalInflectionRules: [InflectionRule] = Default.additionalInflectionRules,
       deprecatedEnumCases: Composition = Default.deprecatedEnumCases,
       schemaDocumentation: Composition = Default.schemaDocumentation,
       selectionSetInitializers: SelectionSetInitializers = Default.selectionSetInitializers,
       operationDocumentFormat: OperationDocumentFormat = Default.operationDocumentFormat,
+      schemaCustomization: SchemaCustomization = Default.schemaCustomization,
       cocoapodsCompatibleImportStatements: Bool = Default.cocoapodsCompatibleImportStatements,
       warningsOnDeprecatedUsage: Composition = Default.warningsOnDeprecatedUsage,
       conversionStrategies: ConversionStrategies = Default.conversionStrategies,
       pruneGeneratedFiles: Bool = Default.pruneGeneratedFiles,
       markOperationDefinitionsAsFinal: Bool = Default.markOperationDefinitionsAsFinal,
+      appendSchemaTypeFilenameSuffix: Bool = Default.appendSchemaTypeFilenameSuffix,
       exportApolloAPI: Bool = Default.exportApolloAPI
     ) {
       self.additionalInflectionRules = additionalInflectionRules
@@ -560,11 +756,13 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       self.schemaDocumentation = schemaDocumentation
       self.selectionSetInitializers = selectionSetInitializers
       self.operationDocumentFormat = operationDocumentFormat
+      self.schemaCustomization = schemaCustomization
       self.cocoapodsCompatibleImportStatements = cocoapodsCompatibleImportStatements
       self.warningsOnDeprecatedUsage = warningsOnDeprecatedUsage
       self.conversionStrategies = conversionStrategies
       self.pruneGeneratedFiles = pruneGeneratedFiles
       self.markOperationDefinitionsAsFinal = markOperationDefinitionsAsFinal
+      self.appendSchemaTypeFilenameSuffix = appendSchemaTypeFilenameSuffix
       self.exportApolloAPI = exportApolloAPI
     }
 
@@ -578,15 +776,17 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       case selectionSetInitializers
       case apqs
       case operationDocumentFormat
+      case schemaCustomization
       case cocoapodsCompatibleImportStatements
       case warningsOnDeprecatedUsage
       case conversionStrategies
       case pruneGeneratedFiles
       case markOperationDefinitionsAsFinal
+      case appendSchemaTypeFilenameSuffix
       case exportApolloAPI
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
       let values = try decoder.container(keyedBy: CodingKeys.self)
       try throwIfContainsUnexpectedKey(container: values, type: Self.self, decoder: decoder)
 
@@ -619,6 +819,11 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
         forKey: .apqs
       )?.operationDocumentFormat ??
       Default.operationDocumentFormat
+      
+      schemaCustomization = try values.decodeIfPresent(
+        SchemaCustomization.self,
+        forKey: .schemaCustomization
+      ) ?? Default.schemaCustomization
 
       cocoapodsCompatibleImportStatements = try values.decodeIfPresent(
         Bool.self,
@@ -645,13 +850,18 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
         forKey: .markOperationDefinitionsAsFinal
       ) ?? Default.markOperationDefinitionsAsFinal
 
+      appendSchemaTypeFilenameSuffix = try values.decodeIfPresent(
+        Bool.self,
+        forKey: .appendSchemaTypeFilenameSuffix
+      ) ?? Default.appendSchemaTypeFilenameSuffix
+
       exportApolloAPI = try values.decodeIfPresent(
         Bool.self,
         forKey: .exportApolloAPI
       ) ?? Default.exportApolloAPI
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
       var container = encoder.container(keyedBy: CodingKeys.self)
 
       try container.encode(self.additionalInflectionRules, forKey: .additionalInflectionRules)
@@ -659,11 +869,13 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       try container.encode(self.schemaDocumentation, forKey: .schemaDocumentation)
       try container.encode(self.selectionSetInitializers, forKey: .selectionSetInitializers)
       try container.encode(self.operationDocumentFormat, forKey: .operationDocumentFormat)
+      try container.encode(self.schemaCustomization, forKey: .schemaCustomization)
       try container.encode(self.cocoapodsCompatibleImportStatements, forKey: .cocoapodsCompatibleImportStatements)
       try container.encode(self.warningsOnDeprecatedUsage, forKey: .warningsOnDeprecatedUsage)
       try container.encode(self.conversionStrategies, forKey: .conversionStrategies)
       try container.encode(self.pruneGeneratedFiles, forKey: .pruneGeneratedFiles)
       try container.encode(self.markOperationDefinitionsAsFinal, forKey: .markOperationDefinitionsAsFinal)
+      try container.encode(self.appendSchemaTypeFilenameSuffix, forKey: .appendSchemaTypeFilenameSuffix)
       try container.encode(self.exportApolloAPI, forKey: .exportApolloAPI)
     }
   }
@@ -755,7 +967,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     }
 
     @available(*, deprecated) // Deprecation attribute added to supress warning.
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
       let values = try decoder.container(keyedBy: CodingKeys.self)
       guard values.allKeys.first != nil else {
         throw DecodingError.typeMismatch(Self.self, DecodingError.Context.init(
@@ -815,7 +1027,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       case operationId
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
       self = OperationDocumentFormat(rawValue: 0)
 
       var container = try decoder.unkeyedContainer()
@@ -839,7 +1051,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       }
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
       var container = encoder.unkeyedContainer()
       if self.contains(.definition) {
         try container.encode(CodingKeys.definition.rawValue)
@@ -853,20 +1065,13 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
   /// The ``SelectionSetInitializers`` configuration is used to determine if you would like
   /// initializers to be generated for your generated selection set models.
   ///
-  /// There are three categories of selection set models that initializers can be generated for:
-  /// - Operations
-  /// - Named fragments
-  /// - Local cache mutations
-  ///
-  /// By default, initializers are only generated for local cache mutations.
+  /// Initializers are always generated for local cache mutations.
+  /// You can additionally configure initializers to be generated for operations and named fragments.
   ///
   /// ``SelectionSetInitializers`` functions like an `OptionSet`, allowing you to combine multiple
   /// different instances together to indicate all the types you would like to generate
   /// initializers for.
   public struct SelectionSetInitializers: Codable, Equatable, ExpressibleByArrayLiteral {
-    private var options: SelectionSetInitializers.Options
-    private var definitions: Set<String>
-
     /// Option to generate initializers for all named fragments.
     public static let namedFragments: SelectionSetInitializers = .init(.namedFragments)
 
@@ -874,13 +1079,10 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     /// that are not local cache mutations.
     public static let operations: SelectionSetInitializers = .init(.operations)
 
-    /// Option to generate initializers for all local cache mutations.
-    public static let localCacheMutations: SelectionSetInitializers = .init(.localCacheMutations)
-
     /// Option to generate initializers for all models.
     /// This includes named fragments, operations, and local cache mutations.
     public static let all: SelectionSetInitializers = [
-      .namedFragments, .operations, .localCacheMutations
+      .namedFragments, .operations
     ]
 
     /// An option to generate initializers for a single operation with a given name.
@@ -892,6 +1094,9 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     public static func fragment(named: String) -> SelectionSetInitializers {
       .init(definitionName: named)
     }
+
+    private var options: SelectionSetInitializers.Options
+    private var definitions: Set<String>
 
     /// Initializes a `SelectionSetInitializer` with an array of values.
     public init(arrayLiteral elements: SelectionSetInitializers...) {
@@ -913,26 +1118,95 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     }
   }
 
+  /// The `FieldMerging` configuration is used to determine what merged fields and named fragment
+  /// accessors are present on the generated selection set models. Field merging generates
+  /// selection set models that are easier to use, but more verbose.
+  ///
+  /// Property accessors are always generated for each field directly included in a selection
+  /// set in the GraphQL definition. In addition, the code generation engine can compute which
+  /// selections from a selection set's parents, sibling inline fragments, and named fragment
+  /// spreads will also be included on the response object, given the selection set's scope.
+  ///
+  /// By default, all possible fields and named fragment accessors are merged into each selection
+  /// set.
+  ///
+  ///  - Note: Disabling field merging and `selectionSetInitializers` functionality are
+  /// incompatible. If using `selectionSetInitializers`, `fieldMerging` must be set to `.all`,
+  /// otherwise a validation error will be thrown when runnning code generation.
+  public struct FieldMerging: Codable, Equatable, ExpressibleByArrayLiteral {
+    /// Merges fields and fragment accessors from the selection set's direct ancestors.
+    public static let ancestors          = FieldMerging(.ancestors)
+
+    /// Merges fields and fragment accessors from sibling inline fragments that match the selection
+    /// set's scope.
+    public static let siblings           = FieldMerging(.siblings)
+
+    /// Merges fields and fragment accessors from named fragments that have been spread into the
+    /// selection set.
+    public static let namedFragments     = FieldMerging(.namedFragments)
+
+    /// Merges all possible fields and fragment accessors from all sources.
+    public static let all: FieldMerging  = [.ancestors, .siblings, .namedFragments]
+
+    /// Disables field merging entirely. Aside from removal of redundant selections, the shape of
+    /// the generated models will directly mirror the GraphQL definition.
+    public static let none: FieldMerging = []
+
+    var options: MergedSelections.MergingStrategy
+
+    private init(_ options: MergedSelections.MergingStrategy) {
+      self.options = options
+    }
+
+    public init(arrayLiteral elements: FieldMerging...) {
+      self.options = []
+      for element in elements {
+        self.options.insert(element.options)
+      }
+    }
+
+    /// Inserts a `SelectionSetInitializer` into the receiver.
+    public mutating func insert(_ member: FieldMerging) {
+      self.options.insert(member.options)
+    }
+  }
+
   public struct ExperimentalFeatures: Codable, Equatable {
-    /**
-     * **EXPERIMENTAL**: If enabled, the generated operations will be transformed using a method
-     * that attempts to maintain compatibility with the legacy behavior from
-     * [`apollo-tooling`](https://github.com/apollographql/apollo-tooling)
-     * for registering persisted operation to a safelist.
-     *
-     * - Note: Safelisting queries is a deprecated feature of Apollo Server that has reduced
-     * support for legacy use cases. This option may not work as intended in all situations.
-     */
+
+    /// **EXPERIMENTAL**: If enabled, the generated operations will be transformed using a method
+    /// that attempts to maintain compatibility with the legacy behavior from
+    /// [`apollo-tooling`](https://github.com/apollographql/apollo-tooling)
+    /// for registering persisted operation to a safelist.
+    ///
+    /// - Note: Safelisting queries is a deprecated feature of Apollo Server that has reduced
+    /// support for legacy use cases. This option may not work as intended in all situations.
     public let legacySafelistingCompatibleOperations: Bool
+
+    /// **EXPERIMENTAL**: Determines which merged fields and named fragment accessors are generated.
+    /// Defaults to `.all`.
+    ///
+    /// - Note: Disabling field merging and `selectionSetInitializers` functionality are
+    /// incompatible. If using `selectionSetInitializers`, `fieldMerging` must be set to `.all`,
+    /// otherwise a validation error will be thrown when runnning code generation.
+    public let fieldMerging: FieldMerging
 
     /// Default property values
     public struct Default {
       public static let legacySafelistingCompatibleOperations: Bool = false
+      public static let fieldMerging: FieldMerging = [.all]
     }
-
+    
+    /// Designated Initializer
+    ///
+    /// - Parameters:
+    ///   - fieldMerging: Which merged fields and named fragment accessors are generated.
+    ///   - legacySafelistingCompatibleOperations: Generate operations that are compatible with
+    ///   legacy safelisting.
     public init(
+      fieldMerging: FieldMerging = Default.fieldMerging,
       legacySafelistingCompatibleOperations: Bool = Default.legacySafelistingCompatibleOperations
     ) {
+      self.fieldMerging = fieldMerging
       self.legacySafelistingCompatibleOperations = legacySafelistingCompatibleOperations
     }
 
@@ -940,15 +1214,28 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
 
     public enum CodingKeys: CodingKey, CaseIterable {
       case legacySafelistingCompatibleOperations
+      case fieldMerging
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
       let values = try decoder.container(keyedBy: CodingKeys.self)
+
+      fieldMerging = try values.decodeIfPresent(
+        FieldMerging.self,
+        forKey: .fieldMerging
+      ) ?? Default.fieldMerging
 
       legacySafelistingCompatibleOperations = try values.decodeIfPresent(
         Bool.self,
         forKey: .legacySafelistingCompatibleOperations
       ) ?? Default.legacySafelistingCompatibleOperations
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+      var container = encoder.container(keyedBy: CodingKeys.self)
+
+      try container.encode(self.fieldMerging, forKey: .fieldMerging)
+      try container.encode(self.legacySafelistingCompatibleOperations, forKey: .legacySafelistingCompatibleOperations)
     }
   }
 
@@ -1026,7 +1313,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     case operationManifest
   }
 
-  public func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: any Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
 
     try container.encode(self.schemaNamespace, forKey: .schemaNamespace)
@@ -1044,7 +1331,7 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
     }
   }
 
-  public init(from decoder: Decoder) throws {
+  public init(from decoder: any Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     try throwIfContainsUnexpectedKey(container: values, type: Self.self, decoder: decoder)
 
@@ -1099,6 +1386,24 @@ public struct ApolloCodegenConfiguration: Codable, Equatable {
       operationManifest: operationManifest ?? Default.operationManifest
     )
   }
+  
+}
+
+// MARK: Errors
+
+extension ApolloCodegenConfiguration {
+  public enum ApolloConfigurationError: Error, LocalizedError {
+    case invalidValueForKey(key: String, value: String)
+    
+    public var errorDescription: String? {
+      switch self {
+      case .invalidValueForKey(let key, let value):
+        return """
+        Invalid value '\(value)' provided for key '\(key)'.
+        """
+      }
+    }
+  }
 }
 
 // MARK: - Helpers
@@ -1108,7 +1413,7 @@ extension ApolloCodegenConfiguration.SchemaTypesFileOutput {
   var isInModule: Bool {
     switch moduleType {
     case .embeddedInTarget: return false
-    case .swiftPackageManager, .other: return true
+    case .swiftPackageManager, .swiftPackage, .other: return true
     }
   }  
 }
@@ -1123,31 +1428,33 @@ extension ApolloCodegenConfiguration.OperationsFileOutput {
   }
 }
 
-extension ApolloCodegenConfiguration.OutputOptions {
+extension ApolloCodegenConfiguration {
   /// Determine whether the operations files are output to the schema types module.
   func shouldGenerateSelectionSetInitializers(for operation: IR.Operation) -> Bool {
-    switch operation.definition.isLocalCacheMutation {
-    case true where selectionSetInitializers.contains(.localCacheMutations):
+    guard experimentalFeatures.fieldMerging == .all else { return false }
+
+    if operation.definition.isLocalCacheMutation {
       return true
 
-    case false where selectionSetInitializers.contains(.operations):
+    } else if options.selectionSetInitializers.contains(.operations) {
       return true
 
-    default:
-      return selectionSetInitializers.contains(definitionNamed: operation.definition.name)
+    } else {
+      return options.selectionSetInitializers.contains(definitionNamed: operation.definition.name)
     }
   }
 
   /// Determine whether the operations files are output to the schema types module.
   func shouldGenerateSelectionSetInitializers(for fragment: IR.NamedFragment) -> Bool {
-    if selectionSetInitializers.contains(.namedFragments) { return true }
+    guard experimentalFeatures.fieldMerging == .all else { return false }
 
-    if fragment.definition.isLocalCacheMutation &&
-        selectionSetInitializers.contains(.localCacheMutations) {
+    if options.selectionSetInitializers.contains(.namedFragments) { return true }
+
+    if fragment.definition.isLocalCacheMutation {
       return true
     }
 
-    return selectionSetInitializers.contains(definitionNamed: fragment.definition.name)
+    return options.selectionSetInitializers.contains(definitionNamed: fragment.definition.name)
   }
 }
 
@@ -1156,7 +1463,6 @@ extension ApolloCodegenConfiguration.OutputOptions {
 extension ApolloCodegenConfiguration.SelectionSetInitializers {
   struct Options: OptionSet, Codable, Equatable {
     let rawValue: Int
-    static let localCacheMutations = Options(rawValue: 1 << 0)
     static let namedFragments      = Options(rawValue: 1 << 1)
     static let operations          = Options(rawValue: 1 << 2)
   }
@@ -1184,11 +1490,14 @@ extension ApolloCodegenConfiguration.SelectionSetInitializers {
   enum CodingKeys: CodingKey, CaseIterable {
     case operations
     case namedFragments
-    case localCacheMutations
     case definitionsNamed
+
+    /// Deprecated
+    /// Local Cache Mutations will now always have initializers generated.
+    case localCacheMutations
   }
 
-  public init(from decoder: Decoder) throws {
+  public init(from decoder: any Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     try throwIfContainsUnexpectedKey(container: values, type: Self.self, decoder: decoder)
     var options: Options = []
@@ -1201,7 +1510,6 @@ extension ApolloCodegenConfiguration.SelectionSetInitializers {
 
     try decode(option: .operations, forKey: .operations)
     try decode(option: .namedFragments, forKey: .namedFragments)
-    try decode(option: .localCacheMutations, forKey: .localCacheMutations)
 
     self.options = options
     self.definitions = try values.decodeIfPresent(
@@ -1209,7 +1517,7 @@ extension ApolloCodegenConfiguration.SelectionSetInitializers {
       forKey: .definitionsNamed) ?? []
   }
 
-  public func encode(to encoder: Encoder) throws {
+  public func encode(to encoder: any Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
 
     func encodeIfPresent(option: Options, forKey key: CodingKeys) throws {
@@ -1220,10 +1528,78 @@ extension ApolloCodegenConfiguration.SelectionSetInitializers {
 
     try encodeIfPresent(option: .operations, forKey: .operations)
     try encodeIfPresent(option: .namedFragments, forKey: .namedFragments)
-    try encodeIfPresent(option: .localCacheMutations, forKey: .localCacheMutations)
 
     if !definitions.isEmpty {
       try container.encode(definitions.sorted(), forKey: .definitionsNamed)
+    }
+  }
+}
+
+// MARK: - FieldMerging - Private Implementation
+
+extension ApolloCodegenConfiguration.FieldMerging {
+
+  // MARK: - Codable
+
+  private enum CodableValues: String {
+    case all
+    case ancestors
+    case siblings
+    case namedFragments
+  }
+
+  public init(from decoder: any Decoder) throws {
+    var values = try decoder.unkeyedContainer()
+
+    var options: MergedSelections.MergingStrategy = []
+
+    while !values.isAtEnd {
+      let option = try values.decode(String.self)
+      switch option {
+      case CodableValues.all.rawValue:
+        self.options = [.all]
+        return
+
+      case CodableValues.ancestors.rawValue:
+        options.insert(.ancestors)
+
+      case CodableValues.siblings.rawValue:
+        options.insert(.siblings)
+
+      case CodableValues.namedFragments.rawValue:
+        options.insert(.namedFragments)
+
+      default:
+        throw DecodingError.dataCorrupted(
+          DecodingError.Context(
+            codingPath: values.codingPath,
+            debugDescription: "Unrecognized value: \(option)"
+          )
+        )
+      }
+    }
+
+    self.options = options
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.unkeyedContainer()
+
+    if options == .all {
+      try container.encode(CodableValues.all.rawValue)
+      return
+    }
+
+    if options.contains(.ancestors) {
+      try container.encode(CodableValues.ancestors.rawValue)
+    }
+
+    if options.contains(.siblings) {
+      try container.encode(CodableValues.siblings.rawValue)
+    }
+
+    if options.contains(.namedFragments) {
+      try container.encode(CodableValues.namedFragments.rawValue)
     }
   }
 }
@@ -1354,7 +1730,7 @@ extension ApolloCodegenConfiguration.OutputOptions {
   ///   - pruneGeneratedFiles: Whether unused generated files will be automatically deleted.
   ///   - markOperationDefinitionsAsFinal: Whether generated GraphQL operation and local cache mutation class types will be marked as `final`.
   @available(*, deprecated,
-              renamed: "init(additionalInflectionRules:queryStringLiteralFormat:deprecatedEnumCases:schemaDocumentation:selectionSetInitializers:operationDocumentFormat:cocoapodsCompatibleImportStatements:warningsOnDeprecatedUsage:conversionStrategies:pruneGeneratedFiles:markOperationDefinitionsAsFinal:)"
+              renamed: "init(additionalInflectionRules:queryStringLiteralFormat:deprecatedEnumCases:schemaDocumentation:selectionSetInitializers:operationDocumentFormat:cocoapodsCompatibleImportStatements:warningsOnDeprecatedUsage:conversionStrategies:pruneGeneratedFiles:markOperationDefinitionsAsFinal:appendSchemaTypeFilenameSuffix:)"
   )
   public init(
     additionalInflectionRules: [InflectionRule] = Default.additionalInflectionRules,
@@ -1380,6 +1756,8 @@ extension ApolloCodegenConfiguration.OutputOptions {
     self.conversionStrategies = conversionStrategies
     self.pruneGeneratedFiles = pruneGeneratedFiles
     self.markOperationDefinitionsAsFinal = markOperationDefinitionsAsFinal
+    self.schemaCustomization = Default.schemaCustomization
+    self.appendSchemaTypeFilenameSuffix = Default.appendSchemaTypeFilenameSuffix
     self.exportApolloAPI = exportApolloAPI
   }
   
@@ -1431,6 +1809,8 @@ extension ApolloCodegenConfiguration.OutputOptions {
     self.conversionStrategies = conversionStrategies
     self.pruneGeneratedFiles = pruneGeneratedFiles
     self.markOperationDefinitionsAsFinal = markOperationDefinitionsAsFinal
+    self.schemaCustomization = Default.schemaCustomization
+    self.appendSchemaTypeFilenameSuffix = Default.appendSchemaTypeFilenameSuffix
     self.exportApolloAPI = exportApolloAPI
   }
 
@@ -1499,6 +1879,12 @@ extension ApolloCodegenConfiguration.ConversionStrategies {
   
 }
 
+extension ApolloCodegenConfiguration.SelectionSetInitializers {
+  /// Option to generate initializers for all local cache mutations.
+  @available(*, deprecated, message: "Local Cache Mutations will now always have initializers generated.")
+  public static let localCacheMutations: ApolloCodegenConfiguration.SelectionSetInitializers = .init([])
+}
+
 private struct AnyCodingKey: CodingKey {
   var stringValue: String
 
@@ -1517,7 +1903,7 @@ private struct AnyCodingKey: CodingKey {
 func throwIfContainsUnexpectedKey<T, C: CodingKey & CaseIterable>(
   container: KeyedDecodingContainer<C>,
   type: T.Type,
-  decoder: Decoder
+  decoder: any Decoder
 ) throws {
   // Map all keys from the input object
   let allKeys = Set(try decoder.container(keyedBy: AnyCodingKey.self).allKeys.map(\.stringValue))

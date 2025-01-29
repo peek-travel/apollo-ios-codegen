@@ -26,8 +26,6 @@ struct OperationDefinitionTemplate: OperationTemplateRenderer {
     \(OperationDeclaration())
       \(DocumentType())
 
-      \(section: DeferredProperties(operation.containsDeferredFragment))
-
       \(section: VariableProperties(operation.definition.variables))
 
       \(Initializer(operation.definition.variables))
@@ -37,12 +35,17 @@ struct OperationDefinitionTemplate: OperationTemplateRenderer {
       \(accessControlModifier(for: .member))struct Data: \(operation.renderedSelectionSetType(config)) {
         \(SelectionSetTemplate(
             definition: operation,
-            generateInitializers: config.options.shouldGenerateSelectionSetInitializers(for: operation),
+            generateInitializers: config.config.shouldGenerateSelectionSetInitializers(for: operation),
             config: config,
             nonFatalErrorRecorder: nonFatalErrorRecorder,
             renderAccessControl: { accessControlModifier(for: .member) }()
         ).renderBody())
       }
+      \(DeferredFragmentsMetadataTemplate(
+        operation: operation,
+        config: config,
+        renderAccessControl: { accessControlModifier(for: .parent) }()
+      ).render())
     }
 
     """)

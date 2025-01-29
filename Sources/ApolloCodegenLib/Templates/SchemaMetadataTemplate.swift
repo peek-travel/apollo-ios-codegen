@@ -22,8 +22,6 @@ struct SchemaMetadataTemplate: TemplateRenderer {
 
     return TemplateString(
     """
-    \(parentAccessLevel)typealias ID = String
-
     \(if: !config.output.schemaTypes.isInModule,
       TemplateString("""
       \(parentAccessLevel)typealias SelectionSet = \(schemaNamespace)_SelectionSet
@@ -39,7 +37,7 @@ struct SchemaMetadataTemplate: TemplateRenderer {
     \(documentation: schema.documentation, config: config)
     \(parentAccessLevel)enum SchemaMetadata: \(config.ApolloAPITargetName).SchemaMetadata {
       \(accessControlModifier(for: .member))\
-    static let configuration: \(config.ApolloAPITargetName).SchemaConfiguration.Type = SchemaConfiguration.self
+    static let configuration: any \(config.ApolloAPITargetName).SchemaConfiguration.Type = SchemaConfiguration.self
 
       \(objectTypeFunction)
     }
@@ -58,7 +56,7 @@ struct SchemaMetadataTemplate: TemplateRenderer {
     static func objectType(forTypename typename: String) -> \(config.ApolloAPITargetName).Object? {
       switch typename {
       \(schema.referencedTypes.objects.map {
-        "case \"\($0.name)\": return \(schemaNamespace).Objects.\($0.formattedName)"
+        "case \"\($0.name.schemaName)\": return \(schemaNamespace).Objects.\($0.render(as: .typename))"
       }, separator: "\n")
       default: return nil
       }

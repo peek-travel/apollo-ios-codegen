@@ -16,23 +16,34 @@ class RootFieldBuilder {
   static func buildRootEntityField(
     forRootField rootField: CompilationResult.Field,
     onRootEntity rootEntity: Entity,
-    inIR ir: IRBuilder
+    inIR ir: IRBuilder,
+    mergingNamedFragmentFields: Bool
   ) async -> Result {
-    return await RootFieldBuilder(ir: ir, rootEntity: rootEntity)
-      .build(rootField: rootField)
+    return await RootFieldBuilder(
+      ir: ir,
+      rootEntity: rootEntity,
+      mergeInNamedFragmentFields: mergingNamedFragmentFields
+    )
+    .build(rootField: rootField)
   }
 
   private let ir: IRBuilder
   private let rootEntity: Entity
   private let entityStorage: DefinitionEntityStorage
+  private let mergeInNamedFragmentFields: Bool
   private var referencedFragments: ReferencedFragments = []
   @IsEverTrue private var containsDeferredFragment: Bool
 
   private var schema: Schema { ir.schema }
 
-  private init(ir: IRBuilder, rootEntity: Entity) {
+  private init(
+    ir: IRBuilder,
+    rootEntity: Entity,
+    mergeInNamedFragmentFields: Bool
+  ) {
     self.ir = ir
     self.rootEntity = rootEntity
+    self.mergeInNamedFragmentFields = mergeInNamedFragmentFields
     self.entityStorage = DefinitionEntityStorage(rootEntity: rootEntity)
   }
 
@@ -68,27 +79,22 @@ class RootFieldBuilder {
   }
 
   private func buildSelectionSet(
-    fromCompiledSelectionSet compiledSelectionSet: CompilationResult.SelectionSet?,
+    fromCompiledSelectionSet compiledSelectionSet: CompilationResult.SelectionSet,
     entity: Entity,
     scopePath: LinkedList<ScopeDescriptor>
   ) async -> SelectionSet {
     let typeInfo = SelectionSet.TypeInfo(
       entity: entity,
-      scopePath: scopePath,
-      isUserDefined: true
+      scopePath: scopePath
     )
 
-    var directSelections: DirectSelections? = nil
+    let directSelections = DirectSelections()
 
-    if let compiledSelectionSet {
-      directSelections = DirectSelections()
-
-      await buildDirectSelections(
-        into: directSelections.unsafelyUnwrapped,
-        atTypePath: typeInfo,
-        from: compiledSelectionSet
-      )
-    }
+    await buildDirectSelections(
+      into: directSelections,
+      atTypePath: typeInfo,
+      from: compiledSelectionSet
+    )
 
     return SelectionSet(
       typeInfo: typeInfo,
@@ -270,7 +276,7 @@ class RootFieldBuilder {
   }
 
   private func scopeCondition(
-    for conditionalSelectionSet: ConditionallyIncludable,
+    for conditionalSelectionSet: any ConditionallyIncludable,
     in parentTypePath: SelectionSet.TypeInfo,
     isDeferred: Bool = false
   ) -> ScopeCondition? {
@@ -279,7 +285,7 @@ class RootFieldBuilder {
       return nil
     }
 
-    let type = (parentTypePath.parentType == conditionalSelectionSet.parentType)
+    let type = (parentTypePath.scope.matches(conditionalSelectionSet.parentType))
     ? nil
     : conditionalSelectionSet.parentType
 
@@ -351,7 +357,7 @@ class RootFieldBuilder {
   }
 
   private func buildInlineFragmentSpread(
-    fromCompiledSelectionSet compiledSelectionSet: CompilationResult.SelectionSet?,
+    fromCompiledSelectionSet compiledSelectionSet: CompilationResult.SelectionSet,
     with scopeCondition: ScopeCondition,
     inParentTypePath enclosingTypeInfo: SelectionSet.TypeInfo,
     deferCondition: CompilationResult.DeferCondition? = nil
@@ -403,7 +409,10 @@ class RootFieldBuilder {
     spreadIntoParentWithTypePath parentTypeInfo: SelectionSet.TypeInfo,
     deferCondition: CompilationResult.DeferCondition? = nil
   ) async -> NamedFragmentSpread {
-    let fragment = await ir.build(fragment: fragmentSpread.fragment)
+    let fragment = await ir.build(
+      fragment: fragmentSpread.fragment,
+      mergingNamedFragmentFields: self.mergeInNamedFragmentFields
+    )
     referencedFragments.append(fragment)
     referencedFragments.append(contentsOf: fragment.referencedFragments)
 
@@ -421,8 +430,7 @@ class RootFieldBuilder {
 
     let typeInfo = SelectionSet.TypeInfo(
       entity: parentTypeInfo.entity,
-      scopePath: scopePath,
-      isUserDefined: true
+      scopePath: scopePath
     )
 
     let fragmentSpread = NamedFragmentSpread(
@@ -431,7 +439,7 @@ class RootFieldBuilder {
       inclusionConditions: AnyOf(scope.conditions)
     )
 
-    if fragmentSpread.typeInfo.deferCondition == nil {
+    if mergeInNamedFragmentFields && fragmentSpread.typeInfo.deferCondition == nil {
       mergeAllSelectionsIntoEntitySelectionTrees(from: fragmentSpread)
     }
 

@@ -21,18 +21,28 @@ extension ApolloCodegen.ConfigurationContext {
         """)
     }
 
+    guard self.experimentalFeatures.fieldMerging == .all ||
+            self.options.selectionSetInitializers == []
+    else {
+      throw ApolloCodegen.Error.fieldMergingIncompatibility
+    }
+
     guard
       !SwiftKeywords.DisallowedSchemaNamespaceNames.contains(self.schemaNamespace.lowercased())
     else {
       throw ApolloCodegen.Error.schemaNameConflict(name: self.schemaNamespace)
     }
 
-    if case .swiftPackage = self.output.testMocks,
-       self.output.schemaTypes.moduleType != .swiftPackageManager {
-      throw ApolloCodegen.Error.testMocksInvalidSwiftPackageConfiguration
+    if case .swiftPackage = self.output.testMocks {
+      switch self.output.schemaTypes.moduleType {
+      case .swiftPackage(_), .swiftPackageManager:
+        break
+      default:
+        throw ApolloCodegen.Error.testMocksInvalidSwiftPackageConfiguration
+      }
     }
 
-    if case .swiftPackageManager = self.output.schemaTypes.moduleType,
+    if case .swiftPackage = self.output.schemaTypes.moduleType,
        self.options.cocoapodsCompatibleImportStatements == true {
       throw ApolloCodegen.Error.invalidConfiguration(message: """
         cocoapodsCompatibleImportStatements cannot be set to 'true' when the output schema types \
@@ -67,7 +77,7 @@ extension ApolloCodegen.ConfigurationContext {
   func validate(_ compilationResult: CompilationResult) throws {
     guard
       !compilationResult.referencedTypes.contains(where: { namedType in
-        namedType.swiftName == self.schemaNamespace.firstUppercased
+        namedType.name.swiftName == self.schemaNamespace.firstUppercased
       }),
       !compilationResult.fragments.contains(where: { fragmentDefinition in
         fragmentDefinition.name == self.schemaNamespace.firstUppercased
